@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 /**
  * Living background for the Plan page:
  *  - the dirt is a field of specks that ripples like water wherever the cursor goes
- *  - over bare dirt, a little shovel follows the cursor and digs, kicking up clods
+ *  - moving or clicking over bare dirt kicks up little clods
  *  - a strip of grass along the bottom sways in a gentle breeze
  */
 
@@ -73,42 +73,6 @@ function makeSpecks(w: number, h: number) {
     groups[Math.floor(Math.random() * SPECK_COLORS.length)].push(i);
   }
   return { xs, ys, size, groups };
-}
-
-function drawShovel(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, alpha: number) {
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.translate(x, y);
-  ctx.rotate(angle); // the blade tip sits at (0,0), handle points up-right
-  // handle
-  ctx.strokeStyle = "#8a5a35";
-  ctx.lineWidth = 3.5;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(0, -14);
-  ctx.lineTo(0, -46);
-  ctx.stroke();
-  // T-grip
-  ctx.strokeStyle = "#6b4226";
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(-6, -47);
-  ctx.lineTo(6, -47);
-  ctx.stroke();
-  // metal spade
-  const metal = ctx.createLinearGradient(-8, 0, 8, 0);
-  metal.addColorStop(0, "#9aa3ad");
-  metal.addColorStop(0.5, "#e3e7eb");
-  metal.addColorStop(1, "#8b939c");
-  ctx.fillStyle = metal;
-  ctx.beginPath();
-  ctx.moveTo(-8, -16);
-  ctx.lineTo(8, -16);
-  ctx.lineTo(7, -4);
-  ctx.quadraticCurveTo(0, 4, -7, -4);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
 }
 
 export default function PlanScenery() {
@@ -222,11 +186,9 @@ export default function PlanScenery() {
     }
 
     // ---- cursor: ripples everywhere, a digging shovel over bare dirt ----
-    const cursor = { x: -999, y: -999, seen: false };
+    const cursor = { x: -999, y: -999 };
     let lastSpawn = { x: -999, y: -999 };
     let overDirt = false;
-    let moving = 0; // 0..1, how much the cursor is moving lately
-    const tool = { x: -999, y: -999, alpha: 0 };
     const clods: Clod[] = [];
 
     const isDirt = (x: number, y: number) => {
@@ -251,13 +213,7 @@ export default function PlanScenery() {
     const onMove = (e: PointerEvent) => {
       cursor.x = e.clientX;
       cursor.y = e.clientY;
-      if (!cursor.seen) {
-        cursor.seen = true;
-        tool.x = cursor.x;
-        tool.y = cursor.y;
-      }
       overDirt = isDirt(cursor.x, cursor.y);
-      moving = Math.min(1, moving + 0.25);
       if (Math.hypot(cursor.x - lastSpawn.x, cursor.y - lastSpawn.y) > SPAWN_EVERY) {
         ripples.push({ x: cursor.x, y: cursor.y, t0: performance.now() / 1000, amp: 10 });
         lastSpawn = { x: cursor.x, y: cursor.y };
@@ -275,7 +231,7 @@ export default function PlanScenery() {
     window.addEventListener("pointerdown", onDown);
     document.addEventListener("mouseleave", onLeave);
 
-    const drawTool = (now: number, dt: number) => {
+    const drawTool = (dt: number) => {
       if (!tctx) return;
       tctx.clearRect(0, 0, w, h);
 
@@ -297,17 +253,6 @@ export default function PlanScenery() {
         tctx.fill();
       }
       tctx.globalAlpha = 1;
-
-      // the shovel trails the cursor a little and digs while moving
-      moving = Math.max(0, moving - dt * 2.5);
-      const follow = Math.min(1, dt * 16);
-      tool.x += (cursor.x - tool.x) * follow;
-      tool.y += (cursor.y - tool.y) * follow;
-      tool.alpha += ((overDirt ? 1 : 0) - tool.alpha) * Math.min(1, dt * 10);
-      if (tool.alpha > 0.02) {
-        const dig = Math.sin(now / 1000 * 16) * 0.35 * moving;
-        drawShovel(tctx, tool.x + 10, tool.y + 14, 0.6 + dig, tool.alpha);
-      }
     };
 
     let last = performance.now();
@@ -317,7 +262,7 @@ export default function PlanScenery() {
       last = now;
       drawDirt(now);
       drawGrass(now / 1000);
-      drawTool(now, dt);
+      drawTool(dt);
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);

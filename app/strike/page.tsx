@@ -7,8 +7,15 @@ import SideTitle from "../components/SideTitle";
 import StrikeTrain from "../components/StrikeTrain";
 import TransitionLink from "../components/TransitionLink";
 import {
+  AUTO_BREAK_MINUTES,
+  DECIDE_SECONDS,
   FLASH_AFTER_SECONDS,
-  TIME_LABELS,
+  breakThenNext,
+  continueStrike,
+  settleBetween,
+  PRIORITY_COLORS,
+  PRIORITY_LABELS,
+  priorityStyle,
   activePlan,
   byImportance,
   clearCompleted,
@@ -76,7 +83,8 @@ export default function Strike() {
   const { tasks, pause } = plan;
 
   const [now, setNow] = useState(() => Date.now());
-  const [askingBreak, setAskingBreak] = useState(false);
+  // which moment the break picker was opened for — it closes itself if that moment passes
+  const [askKey, setAskKey] = useState<string | null>(null);
   const alarm = useAlarm();
   const alarmed = useRef(new Set<string>());
 
@@ -104,7 +112,7 @@ export default function Strike() {
     }
   });
 
-  // The break is over: ring and get back to it.
+  // The break is over: ring and get back to it (a between-tasks break starts the next task).
   useEffect(() => {
     if (pause && now >= pause.until) {
       if (now - pause.until < 5000) alarm.ring();
@@ -112,17 +120,35 @@ export default function Strike() {
     }
   });
 
-  const blocked = Boolean(pause) || (!multitask && running.length > 0);
+  // Just finished a task and didn't choose within a minute → automatic short break.
+  const between = !pause ? plan.between : undefined;
+  useEffect(() => {
+    if (between && now >= between.at + DECIDE_SECONDS * 1000) {
+      settleBetween(now);
+    }
+  });
+
+  const askingBreak = askKey !== null && askKey === (between ? `b${between.at}` : "run");
+
+  const blocked = Boolean(pause) || Boolean(between) || (!multitask && running.length > 0);
+  const lastDone = done[0];
 
   function handleStart(id: string) {
     alarm.unlock();
     startTask(id);
   }
 
+  function handleContinue(id?: string) {
+    alarm.unlock();
+    setAskKey(null);
+    continueStrike(id);
+  }
+
   function startBreak(minutes: number) {
     alarm.unlock();
-    pausePlan(minutes);
-    setAskingBreak(false);
+    if (between) breakThenNext(minutes);
+    else pausePlan(minutes);
+    setAskKey(null);
   }
 
   return (
@@ -132,7 +158,9 @@ export default function Strike() {
       <div className="flex-1 min-w-0 pt-10 pb-56">
         <main className="px-5 sm:px-10 max-w-2xl mx-auto space-y-8">
           <div className="space-y-5">
-            <PlanTabs plans={state.plans} activeId={plan.id} theme="black" />
+            <div className="lg:hidden">
+              <PlanTabs plans={state.plans} activeId={plan.id} theme="black" layout="row" />
+            </div>
 
             <div className="flex items-center gap-3">
               <h2 className="min-w-0 flex-1 truncate text-3xl font-extrabold tracking-tight">{plan.name}</h2>
@@ -144,7 +172,7 @@ export default function Strike() {
               {running.length > 0 && !pause && (
                 <button
                   type="button"
-                  onClick={() => setAskingBreak(true)}
+                  onClick={() => setAskKey("run")}
                   className="flex shrink-0 items-center gap-2 rounded-xl border-2 border-sky-400/70 px-4 py-2 text-sm font-bold text-sky-300 transition-colors hover:bg-sky-400 hover:text-neutral-950"
                 >
                   <PauseIcon /> Pause
@@ -157,7 +185,7 @@ export default function Strike() {
               <div className="flex items-center gap-2 text-sm text-neutral-400">
                 Show
                 <div className="flex gap-1">
-                  {[1, 2, 3, 4, 5].map((n) => (
+                  {[1, 2, 3].map((n) => (
                     <button
                       key={n}
                       type="button"
@@ -185,7 +213,7 @@ export default function Strike() {
                 Multitask
                 <span
                   className={`relative inline-block w-10 h-6 rounded-full transition-colors ${
-                    multitask ? "bg-yellow-400" : "bg-neutral-700"
+                    multitask ? "bg-[#3B82F6]" : "bg-neutral-700"
                   }`}
                 >
                   <span
@@ -261,10 +289,10 @@ export default function Strike() {
             </section>
           )}
 
-          {/* Next tasks — yellow */}
+          {/* Next tasks — coloured by priority (navy / royal / ice blue) */}
           {todo.length > 0 && (
             <section>
-              <h2 className="mb-1 text-sm font-extrabold uppercase tracking-[0.2em] text-yellow-400">
+              <h2 className="mb-1 text-sm font-extrabold uppercase tracking-[0.2em] text-[#93C5FD]">
                 Next {next.length === 1 ? "task" : `${next.length} tasks`}
               </h2>
               <p className="mb-3 text-sm text-neutral-400">
@@ -281,21 +309,22 @@ export default function Strike() {
                 {next.map((t) => (
                   <li
                     key={t.id}
-                    className={`flex items-center gap-4 rounded-xl border-2 border-yellow-400 bg-yellow-300 px-5 py-4 text-neutral-950 transition-opacity ${
+                    style={priorityStyle(t.priority)}
+                    className={`flex items-center gap-4 rounded-xl border-2 px-5 py-4 transition-opacity ${
                       blocked ? "opacity-40" : ""
                     }`}
                   >
                     <div className="flex-1 min-w-0">
                       <p className="font-bold text-lg break-words">{t.action}</p>
-                      <p className="text-sm text-neutral-800">
-                        P{t.priority} · {t.time} ({TIME_LABELS[t.time]}) · {t.minutes} min timer
+                      <p className="text-sm" style={{ color: PRIORITY_COLORS[t.priority].sub }}>
+                        {t.minutes} min timer · {PRIORITY_LABELS[t.priority]} priority
                       </p>
                     </div>
                     <button
                       type="button"
                       disabled={blocked}
                       onClick={() => handleStart(t.id)}
-                      className="shrink-0 px-5 py-2.5 rounded-lg bg-neutral-950 text-yellow-300 font-bold text-sm hover:bg-neutral-800 transition-colors disabled:cursor-not-allowed"
+                      className="shrink-0 px-5 py-2.5 rounded-lg bg-neutral-950 text-white font-bold text-sm hover:bg-neutral-800 transition-colors disabled:cursor-not-allowed"
                     >
                       Start
                     </button>
@@ -362,6 +391,13 @@ export default function Strike() {
         </main>
       </div>
 
+      {/* Plans sidebar (wide screens) */}
+      <aside className="hidden lg:block w-60 xl:w-64 shrink-0">
+        <div className="sticky top-0 h-screen pl-2 pr-5 pt-10 pb-64">
+          <PlanTabs plans={state.plans} activeId={plan.id} theme="black" layout="column" />
+        </div>
+      </aside>
+
       {/* The train: how far through the plan you are */}
       <div className="pointer-events-none fixed bottom-0 right-0 left-24 sm:left-28 z-20">
         <div className="h-16 bg-gradient-to-t from-neutral-950 to-transparent" />
@@ -370,8 +406,29 @@ export default function Strike() {
         </div>
       </div>
 
-      {askingBreak && !pause && <BreakPicker onPick={startBreak} onCancel={() => setAskingBreak(false)} />}
-      {pause && <BreakTimer pause={pause} now={now} />}
+      {between && (
+        <BetweenTasks
+          at={between.at}
+          now={now}
+          finished={lastDone}
+          next={next}
+          onContinue={handleContinue}
+          onBreak={() => {
+            alarm.unlock();
+            setAskKey(`b${between.at}`);
+          }}
+          paused={askingBreak}
+        />
+      )}
+      {askingBreak && !pause && (
+        <BreakPicker
+          onPick={startBreak}
+          onCancel={() => setAskKey(null)}
+          cancelLabel={between ? "Back" : undefined}
+          note={between ? "When the break runs out, your next task starts by itself." : undefined}
+        />
+      )}
+      {pause && <BreakTimer pause={pause} now={now} nextUp={pause.thenNext ? todo[0] : undefined} />}
     </div>
   );
 }
@@ -399,8 +456,142 @@ function DoneButton({ task, className }: { task: Task; className: string }) {
   );
 }
 
+/**
+ * Shown right after you finish a task. A one-minute clock runs so the strike never just stops:
+ * pick your next task, or take a break. Choose nothing and you get an automatic short break,
+ * after which the next task starts by itself.
+ */
+function BetweenTasks({
+  at,
+  now,
+  finished,
+  next,
+  onContinue,
+  onBreak,
+  paused,
+}: {
+  at: number;
+  now: number;
+  finished?: Task;
+  next: Task[];
+  onContinue: (id?: string) => void;
+  onBreak: () => void;
+  paused: boolean; // the break picker is open on top
+}) {
+  const remaining = Math.max(0, Math.ceil((at + DECIDE_SECONDS * 1000 - now) / 1000));
+  const frac = remaining / DECIDE_SECONDS;
+  const urgent = remaining <= 10;
+  const [first, ...rest] = next;
+  const firstColors = first ? PRIORITY_COLORS[first.priority] : undefined;
+
+  // Enter = straight into the top task, B = break
+  useEffect(() => {
+    if (paused) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        onContinue(first?.id);
+      } else if (e.key === "b" || e.key === "B") {
+        onBreak();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [paused, first?.id, onContinue, onBreak]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-5 backdrop-blur-[3px]">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="between-title"
+        className="paused-pop w-full max-w-md rounded-3xl border-2 border-green-500/50 bg-neutral-950/95 px-7 py-8 text-center shadow-[0_30px_80px_rgba(0,0,0,0.6)]"
+      >
+        <p className="text-sm font-bold uppercase tracking-[0.25em] text-green-400">✓ Struck</p>
+        {finished && <p className="mt-1 truncate text-neutral-400 line-through decoration-green-500/60">{finished.action}</p>}
+        <h3 id="between-title" className="mt-4 text-2xl font-extrabold">
+          Keep the streak going?
+        </h3>
+
+        {/* the countdown that keeps you moving */}
+        <p
+          className={`mt-4 font-mono text-5xl font-extrabold tabular-nums ${urgent ? "animate-pulse text-red-400" : "text-[#F2E9DC]"}`}
+        >
+          {formatClock(remaining)}
+        </p>
+        <div className="mx-auto mt-3 h-1.5 max-w-xs overflow-hidden rounded-full bg-neutral-800">
+          <div
+            className="h-full rounded-full"
+            style={{
+              width: `${frac * 100}%`,
+              background: urgent ? "#f87171" : "#3B82F6",
+              transition: "width 1s linear, background 0.3s",
+            }}
+          />
+        </div>
+        <p className="mt-2 text-xs text-neutral-500">
+          No choice by then → automatic {AUTO_BREAK_MINUTES} min break, then your next task starts.
+        </p>
+
+        {first && firstColors && (
+          <button
+            type="button"
+            autoFocus
+            onClick={() => onContinue(first.id)}
+            style={priorityStyle(first.priority)}
+            className="mt-6 w-full rounded-2xl border-2 px-5 py-4 text-left transition hover:brightness-110"
+          >
+            <span className="block text-xs font-bold uppercase tracking-wider" style={{ color: firstColors.sub }}>
+              Next task · Enter ↵
+            </span>
+            <span className="mt-0.5 flex items-baseline justify-between gap-3">
+              <span className="min-w-0 truncate text-lg font-extrabold">{first.action}</span>
+              <span className="shrink-0 font-bold tabular-nums">{first.minutes} min →</span>
+            </span>
+          </button>
+        )}
+
+        {rest.length > 0 && (
+          <div className="mt-2 space-y-2">
+            {rest.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => onContinue(t.id)}
+                style={priorityStyle(t.priority)}
+                className="flex w-full items-baseline justify-between gap-3 rounded-xl border-2 px-4 py-2.5 text-left text-sm opacity-80 transition hover:opacity-100"
+              >
+                <span className="min-w-0 truncate font-bold">{t.action}</span>
+                <span className="shrink-0 tabular-nums">{t.minutes} min</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={onBreak}
+          className="mt-4 w-full rounded-xl border-2 border-sky-400/60 py-3 text-sm font-bold text-sky-300 transition-colors hover:bg-sky-400 hover:text-neutral-950"
+        >
+          Take a break (B)
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** "How long are you pausing for?" */
-function BreakPicker({ onPick, onCancel }: { onPick: (min: number) => void; onCancel: () => void }) {
+function BreakPicker({
+  onPick,
+  onCancel,
+  cancelLabel = "Never mind, keep going",
+  note = "Your timers freeze. When the break runs out, you're back on.",
+}: {
+  onPick: (min: number) => void;
+  onCancel: () => void;
+  cancelLabel?: string;
+  note?: string;
+}) {
   const [custom, setCustom] = useState("");
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-5">
@@ -414,7 +605,7 @@ function BreakPicker({ onPick, onCancel }: { onPick: (min: number) => void; onCa
         <h3 id="break-title" className="text-xl font-extrabold">
           How long are you pausing?
         </h3>
-        <p className="mt-1 text-sm text-neutral-400">Your timers freeze. When the break runs out, you&apos;re back on.</p>
+        <p className="mt-1 text-sm text-neutral-400">{note}</p>
         <div className="mt-5 grid grid-cols-4 gap-2">
           {BREAK_OPTIONS.map((m) => (
             <button
@@ -454,7 +645,7 @@ function BreakPicker({ onPick, onCancel }: { onPick: (min: number) => void; onCa
           </button>
         </form>
         <button type="button" onClick={onCancel} className="mt-4 w-full text-sm text-neutral-500 hover:text-neutral-300">
-          Never mind, keep going
+          {cancelLabel}
         </button>
       </div>
     </div>
@@ -462,7 +653,7 @@ function BreakPicker({ onPick, onCancel }: { onPick: (min: number) => void; onCa
 }
 
 /** Big PAUSED pop-up over a slightly darkened page, with the break's time left. */
-function BreakTimer({ pause, now }: { pause: Pause; now: number }) {
+function BreakTimer({ pause, now, nextUp }: { pause: Pause; now: number; nextUp?: Task }) {
   const total = Math.max(1, Math.round((pause.until - pause.startedAt) / 1000));
   const remaining = Math.max(0, Math.round((pause.until - now) / 1000));
   const frac = remaining / total;
@@ -497,12 +688,23 @@ function BreakTimer({ pause, now }: { pause: Pause; now: number }) {
         <p className="mt-5 text-neutral-300">
           {urgent ? "Almost time. Get ready." : warning ? "Wrap it up — break's nearly over." : "Breathe. Water. Stretch. The clock is running."}
         </p>
+        {nextUp && (
+          <p className="mt-3 text-sm text-neutral-400">
+            Then straight into{" "}
+            <span
+              className="rounded-md px-2 py-0.5 font-bold"
+              style={priorityStyle(nextUp.priority)}
+            >
+              {nextUp.action}
+            </span>
+          </p>
+        )}
         <button
           type="button"
           onClick={() => resumePlan()}
           className="mt-6 rounded-xl bg-[#F2E9DC] px-6 py-3 font-bold text-neutral-950 transition-colors hover:bg-white"
         >
-          I&apos;m back — resume now
+          {nextUp ? "I'm back — start it now" : "I'm back — resume now"}
         </button>
       </div>
     </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { byImportance, secondsLeft, type Pause, type Task } from "../lib/jodo";
+import { PRIORITY_COLORS, byImportance, secondsLeft, type Pause, type Task } from "../lib/jodo";
 
 /**
  * A little steam train along the bottom of the Strike page that shows how far
@@ -334,15 +334,15 @@ export default function StrikeTrain({ tasks, pause }: Props) {
         const isDone = tk.status === "done";
         const isNext = k === doneCount + 1 && tk.status === "active";
         const isStuck = isNext && stuck;
+        const pc = PRIORITY_COLORS[tk.priority] ?? PRIORITY_COLORS[2];
         if (isDone) drawStation(x, "#14532d", "#166534");
         else if (isStuck) drawStation(x, flashOn ? "#991b1b" : "#7f1d1d", "#dc2626");
-        else if (isNext) drawStation(x, "#713f12", "#ca8a04");
+        else if (isNext) drawStation(x, "#1e293b", pc.bg);
         else drawStation(x, "#27272a", "#3f3f46");
         const label = (isDone ? "✓ " : "") + tk.action;
         if (isDone) drawSign(x, label, spacing(k), "#166534", "#dcfce7");
         else if (isStuck) drawSign(x, label, spacing(k), flashOn ? "#dc2626" : "#991b1b", "#fff");
-        else if (isNext) drawSign(x, label, spacing(k), "#facc15", "#18181b");
-        else drawSign(x, label, spacing(k), "#27272a", "#d4d4d8");
+        else drawSign(x, label, spacing(k), pc.bg, pc.fg); // upcoming + current: priority blue
       }
 
       const arrived = n > 0 && doneCount === n && Math.abs(pos - goldX) < 6;

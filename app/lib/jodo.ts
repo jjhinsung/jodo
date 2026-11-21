@@ -1,14 +1,12 @@
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, type CSSProperties } from "react";
 
-export type TimeClass = "A" | "B" | "C";
 export type Status = "todo" | "active" | "done";
 
 export type Task = {
   id: string;
   action: string;
-  priority: number; // 1 (super high) – 5 (really low)
-  time: TimeClass; // A: <10 min, B: 10–30 min, C: 1 hour+
-  minutes: number; // time allotted; the Strike timer counts down from this
+  priority: number; // 1 (high) – 3 (low)
+  minutes: number; // the timer: Strike counts down from this
   status: Status;
   createdAt: number;
   startedAt?: number;
@@ -16,8 +14,11 @@ export type Task = {
   pausedMs?: number; // time spent on breaks while this task was running
 };
 
-/** A break: every running timer in the plan is frozen until `until`. */
-export type Pause = { startedAt: number; until: number };
+/**
+ * A break: every running timer in the plan is frozen until `until`.
+ * `thenNext` = a between-tasks break: when it ends, the next task starts by itself.
+ */
+export type Pause = { startedAt: number; until: number; thenNext?: boolean };
 
 /** A separate list, e.g. "Clean the house" or "Homework". */
 export type Plan = {
@@ -27,23 +28,48 @@ export type Plan = {
   /** Once you go Strike, the plan is locked in — no edits until every task is done. */
   locked: boolean;
   pause?: Pause;
+  /** Just finished a task: a short countdown to choose "next task" or "break" (auto-break if you don't). */
+  between?: { at: number };
   createdAt: number;
 };
+
+/** A reusable plan ("Morning routine") you can drop back in any day. */
+export type SavedTask = { action: string; priority: number; minutes: number };
+export type SavedPlan = { id: string; name: string; tasks: SavedTask[]; createdAt: number };
 
 export type JodoState = {
   plans: Plan[];
   activePlanId: string;
   visibleCount: number; // how many "next" tasks Strike shows (default 3)
   multitask: boolean; // allow several tasks in progress at once
+  saved: SavedPlan[];
 };
 
-export const TIME_CLASSES: TimeClass[] = ["A", "B", "C"];
-export const TIME_LABELS: Record<TimeClass, string> = {
-  A: "Under 10 min",
-  B: "10–30 min",
-  C: "1 hour +",
+/** After finishing a task you get this long to choose… */
+export const DECIDE_SECONDS = 60;
+/** …otherwise you're put on a break of this many minutes, then the next task starts. */
+export const AUTO_BREAK_MINUTES = 3;
+
+export const PRIORITIES = [1, 2, 3];
+export const PRIORITY_LABELS: Record<number, string> = { 1: "High", 2: "Medium", 3: "Low" };
+
+// priority colours: 1 High = deep navy, 2 Medium = royal blue, 3 Low = pale ice blue
+// bg = block colour, fg = main text on it, sub = softer secondary text on it
+export const PRIORITY_COLORS: Record<number, { bg: string; fg: string; sub: string }> = {
+  1: { bg: "#1E3A8A", fg: "#EFF6FF", sub: "#BFDBFE" },
+  2: { bg: "#3B82F6", fg: "#FFFFFF", sub: "#DBEAFE" },
+  3: { bg: "#93C5FD", fg: "#0B1E44", sub: "#1E3A8A" },
 };
-export const DEFAULT_MINUTES: Record<TimeClass, number> = { A: 10, B: 20, C: 60 };
+
+export function priorityStyle(p: number): CSSProperties {
+  const c = PRIORITY_COLORS[p] ?? PRIORITY_COLORS[2];
+  return { backgroundColor: c.bg, borderColor: c.bg, color: c.fg };
+}
+export const DEFAULT_TIMER = 15; // minutes
+export const TIMER_PRESETS = [5, 10, 15, 25, 45, 60];
+
+// Older saves sized tasks by class (A/B/C…) instead of minutes.
+const OLD_CLASS_MINUTES: Record<string, number> = { A: 10, B: 20, C: 60, D: 60, E: 60 };
 
 /** Seconds past the deadline after which a CRITICAL task starts flashing. */
 export const FLASH_AFTER_SECONDS = 30 * 60;
@@ -52,7 +78,13 @@ const KEY = "jodo-state-v2";
 const OLD_KEYS = ["jodo-state", "jodo-tasks"]; // single-list versions
 
 const DEFAULT_PLAN: Plan = { id: "default", name: "Today", tasks: [], locked: false, createdAt: 0 };
-const EMPTY: JodoState = { plans: [DEFAULT_PLAN], activePlanId: "default", visibleCount: 3, multitask: false };
+const EMPTY: JodoState = {
+  plans: [DEFAULT_PLAN],
+  activePlanId: "default",
+  visibleCount: 3,
+  multitask: false,
+  saved: [],
+};
 
 // ---------- parsing / migration ----------
 
@@ -61,20 +93,15 @@ function normalizeTask(raw: unknown): Task | null {
   const t = raw as Record<string, unknown>;
   if (typeof t.id !== "string" || typeof t.action !== "string") return null;
 
-  const time: TimeClass = TIME_CLASSES.includes(t.time as TimeClass)
-    ? (t.time as TimeClass)
-    : t.time === "D" || t.time === "E"
-      ? "C"
-      : "B";
   const minutesNum = Number(t.minutes ?? t.allotment);
-  const minutes = minutesNum > 0 ? Math.round(minutesNum) : DEFAULT_MINUTES[time];
+  const minutes =
+    minutesNum > 0 ? Math.round(minutesNum) : (OLD_CLASS_MINUTES[String(t.time)] ?? DEFAULT_TIMER);
   const status: Status = t.status === "active" || t.status === "done" ? t.status : "todo";
 
   return {
     id: t.id,
     action: t.action,
-    priority: Math.min(5, Math.max(1, Number(t.priority) || 3)),
-    time,
+    priority: Math.min(3, Math.max(1, Number(t.priority) || 2)), // old 4s and 5s become 3 (low)
     minutes,
     status,
     createdAt: Number(t.createdAt) || 0,
@@ -93,21 +120,48 @@ function normalizePlan(raw: unknown): Plan | null {
   const p = raw as Record<string, unknown>;
   if (typeof p.id !== "string") return null;
   const pause = p.pause as Pause | undefined;
+  const between = p.between as { at?: unknown } | undefined;
   return {
     id: p.id,
     name: typeof p.name === "string" && p.name.trim() ? p.name : "Untitled",
     tasks: normalizeTasks(p.tasks),
     locked: Boolean(p.locked),
-    pause: pause && typeof pause.startedAt === "number" && typeof pause.until === "number" ? pause : undefined,
+    pause:
+      pause && typeof pause.startedAt === "number" && typeof pause.until === "number"
+        ? { startedAt: pause.startedAt, until: pause.until, thenNext: Boolean(pause.thenNext) || undefined }
+        : undefined,
+    between: between && typeof between.at === "number" ? { at: between.at } : undefined,
     createdAt: Number(p.createdAt) || 0,
+  };
+}
+
+function normalizeSaved(raw: unknown): SavedPlan | null {
+  if (!raw || typeof raw !== "object") return null;
+  const s = raw as Record<string, unknown>;
+  if (typeof s.id !== "string") return null;
+  const tasks = (Array.isArray(s.tasks) ? s.tasks : [])
+    .filter((t): t is Record<string, unknown> => Boolean(t) && typeof (t as SavedTask).action === "string")
+    .map((t) => ({
+      action: String(t.action),
+      priority: Math.min(3, Math.max(1, Number(t.priority) || 2)),
+      minutes: Math.max(1, Math.round(Number(t.minutes)) || DEFAULT_TIMER),
+    }));
+  return {
+    id: s.id,
+    name: typeof s.name === "string" && s.name.trim() ? s.name : "Untitled",
+    tasks,
+    createdAt: Number(s.createdAt) || 0,
   };
 }
 
 function settings(data: Record<string, unknown> | null) {
   const count = Number(data?.visibleCount);
   return {
-    visibleCount: count >= 1 && count <= 5 ? Math.round(count) : 3,
+    visibleCount: count >= 1 ? Math.min(3, Math.round(count)) : 3,
     multitask: Boolean(data?.multitask),
+    saved: Array.isArray(data?.saved)
+      ? data.saved.map(normalizeSaved).filter((s: SavedPlan | null): s is SavedPlan => s !== null)
+      : [],
   };
 }
 
@@ -117,7 +171,7 @@ function parseCurrent(raw: string): JodoState {
     const plans = Array.isArray(data?.plans)
       ? data.plans.map(normalizePlan).filter((p: Plan | null): p is Plan => p !== null)
       : [];
-    if (plans.length === 0) return EMPTY;
+    if (plans.length === 0) return { ...EMPTY, ...settings(data), plans: EMPTY.plans };
     const activePlanId = plans.some((p: Plan) => p.id === data.activePlanId) ? data.activePlanId : plans[0].id;
     return { plans, activePlanId, ...settings(data) };
   } catch {
@@ -241,7 +295,7 @@ export function deletePlan(id: string) {
 
 /** Wipe a plan clean — the only way out of a locked plan before it's done. */
 export function resetPlan(id: string) {
-  updatePlan((p) => ({ ...p, tasks: [], locked: false, pause: undefined }), id);
+  updatePlan((p) => ({ ...p, tasks: [], locked: false, pause: undefined, between: undefined }), id);
 }
 
 /** Commit to a plan: from now on it can't be edited until every task is done. */
@@ -251,7 +305,7 @@ export function lockPlan(id: string) {
 
 // ---------- task actions (active plan) ----------
 
-export function addTask(input: { action: string; priority: number; time: TimeClass; minutes: number }) {
+export function addTask(input: { action: string; priority: number; minutes: number }) {
   const action = input.action.trim();
   if (!action) return;
   updatePlan((p) => {
@@ -259,9 +313,8 @@ export function addTask(input: { action: string; priority: number; time: TimeCla
     const task: Task = {
       id: crypto.randomUUID(),
       action,
-      priority: input.priority,
-      time: input.time,
-      minutes: Math.max(1, Math.round(input.minutes) || DEFAULT_MINUTES[input.time]),
+      priority: Math.min(3, Math.max(1, input.priority)),
+      minutes: Math.max(1, Math.round(input.minutes) || DEFAULT_TIMER),
       status: "todo",
       createdAt: Date.now(),
     };
@@ -269,7 +322,7 @@ export function addTask(input: { action: string; priority: number; time: TimeCla
   });
 }
 
-export function updateTask(id: string, patch: Partial<Pick<Task, "action" | "priority" | "time" | "minutes">>) {
+export function updateTask(id: string, patch: Partial<Pick<Task, "action" | "priority" | "minutes">>) {
   updatePlan((p) => (p.locked ? p : { ...p, tasks: p.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)) }));
 }
 
@@ -278,27 +331,72 @@ export function deleteTask(id: string) {
 }
 
 /** Start a task's timer (locks the plan). Blocked during a break, and without multitask while another runs. */
+function withStarted(p: Plan, id: string, at: number): Plan {
+  return {
+    ...p,
+    locked: true,
+    between: undefined,
+    tasks: p.tasks.map((t) =>
+      t.id === id && t.status === "todo" ? { ...t, status: "active", startedAt: at, pausedMs: 0 } : t,
+    ),
+  };
+}
+
+/** Start a task's timer (locks the plan). Blocked during a break, and without multitask while another runs. */
 export function startTask(id: string) {
   updatePlan((p, s) => {
     if (p.pause) return p;
     if (!s.multitask && p.tasks.some((t) => t.status === "active")) return p;
-    return {
-      ...p,
-      locked: true,
-      tasks: p.tasks.map((t) =>
-        t.id === id ? { ...t, status: "active", startedAt: Date.now(), pausedMs: 0 } : t,
-      ),
-    };
+    return withStarted(p, id, Date.now());
   });
 }
 
 export function completeTask(id: string) {
   updatePlan((p) => {
-    const tasks = p.tasks.map((t) => (t.id === id ? { ...t, status: "done" as const, completedAt: Date.now() } : t));
+    const now = Date.now();
+    const tasks = p.tasks.map((t) => (t.id === id ? { ...t, status: "done" as const, completedAt: now } : t));
     const allDone = tasks.every((t) => t.status === "done");
+    // keep the momentum: if there's more to do and nothing else running, open the
+    // "next task or break?" countdown
+    const between =
+      !allDone && !tasks.some((t) => t.status === "active") && tasks.some((t) => t.status === "todo")
+        ? { at: now }
+        : undefined;
     // finishing the last task releases the lock
-    return { ...p, tasks, locked: allDone ? false : p.locked, pause: allDone ? undefined : p.pause };
+    return {
+      ...p,
+      tasks,
+      locked: allDone ? false : p.locked,
+      pause: allDone ? undefined : p.pause,
+      between,
+    };
   });
+}
+
+/** From the between-tasks countdown: go straight into a task (the top one if none given). */
+export function continueStrike(id?: string) {
+  updatePlan((p) => {
+    const next = id ?? p.tasks.filter((t) => t.status === "todo").sort(byImportance)[0]?.id;
+    if (!next || p.pause) return { ...p, between: undefined };
+    return withStarted(p, next, Date.now());
+  });
+}
+
+/** From the between-tasks countdown: take a break; the next task starts when it ends. */
+export function breakThenNext(minutes: number, startedAt = Date.now()) {
+  updatePlan((p) => ({
+    ...p,
+    between: undefined,
+    pause: { startedAt, until: startedAt + Math.max(1, minutes) * 60_000, thenNext: true },
+  }));
+}
+
+/** Didn't choose in time → automatic short break, timed from when the countdown ran out. */
+export function settleBetween(now = Date.now()) {
+  const p = activePlan(getSnapshot());
+  if (!p.between) return;
+  const deadline = p.between.at + DECIDE_SECONDS * 1000;
+  if (now >= deadline) breakThenNext(AUTO_BREAK_MINUTES, deadline);
 }
 
 /** Put a finished task back in the to-do pile. */
@@ -329,7 +427,7 @@ export function resumePlan() {
     if (!p.pause) return p;
     const end = Math.min(Date.now(), p.pause.until);
     const pause = p.pause;
-    return {
+    const resumed: Plan = {
       ...p,
       pause: undefined,
       tasks: p.tasks.map((t) => {
@@ -338,13 +436,67 @@ export function resumePlan() {
         return { ...t, pausedMs: (t.pausedMs ?? 0) + frozen };
       }),
     };
+    // a between-tasks break rolls straight into the next task — no stopping
+    if (pause.thenNext && !resumed.tasks.some((t) => t.status === "active")) {
+      const next = resumed.tasks.filter((t) => t.status === "todo").sort(byImportance)[0];
+      if (next) return withStarted(resumed, next.id, end);
+    }
+    return resumed;
+  });
+}
+
+// ---------- saved plans (reusable routines) ----------
+
+/** Save a plan's tasks for reuse. Saving again under the same name replaces the old copy. */
+export function savePlan(planId: string) {
+  update((s) => {
+    const plan = s.plans.find((p) => p.id === planId);
+    if (!plan || plan.tasks.length === 0) return s;
+    const tasks: SavedTask[] = [...plan.tasks]
+      .sort(byImportance)
+      .map(({ action, priority, minutes }) => ({ action, priority, minutes }));
+    const same = s.saved.find((x) => x.name.trim().toLowerCase() === plan.name.trim().toLowerCase());
+    if (same) {
+      return { ...s, saved: s.saved.map((x) => (x.id === same.id ? { ...x, name: plan.name, tasks } : x)) };
+    }
+    const saved: SavedPlan = { id: crypto.randomUUID(), name: plan.name, tasks, createdAt: Date.now() };
+    return { ...s, saved: [...s.saved, saved] };
+  });
+}
+
+export function deleteSaved(id: string) {
+  update((s) => ({ ...s, saved: s.saved.filter((x) => x.id !== id) }));
+}
+
+/**
+ * Bring a saved plan back. With `intoPlanId` (an unlocked plan) its tasks are added there;
+ * otherwise it opens as a fresh plan tab.
+ */
+export function applySaved(id: string, intoPlanId?: string) {
+  update((s) => {
+    const saved = s.saved.find((x) => x.id === id);
+    if (!saved) return s;
+    const now = Date.now();
+    const fresh = saved.tasks.map(
+      (t, i): Task => ({ id: crypto.randomUUID(), ...t, status: "todo", createdAt: now + i }),
+    );
+    const target = intoPlanId ? s.plans.find((p) => p.id === intoPlanId && !p.locked) : undefined;
+    if (target) {
+      return {
+        ...s,
+        activePlanId: target.id,
+        plans: s.plans.map((p) => (p.id === target.id ? { ...p, tasks: [...p.tasks, ...fresh] } : p)),
+      };
+    }
+    const plan: Plan = { id: crypto.randomUUID(), name: saved.name, tasks: fresh, locked: false, createdAt: now };
+    return { ...s, plans: [...s.plans, plan], activePlanId: plan.id };
   });
 }
 
 // ---------- settings ----------
 
 export function setVisibleCount(n: number) {
-  update((s) => ({ ...s, visibleCount: Math.min(5, Math.max(1, n)) }));
+  update((s) => ({ ...s, visibleCount: Math.min(3, Math.max(1, n)) }));
 }
 
 export function setMultitask(on: boolean) {
@@ -355,7 +507,7 @@ export function setMultitask(on: boolean) {
 
 /** Most important first; ties go to the quicker task, then the older one. */
 export function byImportance(a: Task, b: Task) {
-  return a.priority - b.priority || a.time.localeCompare(b.time) || a.createdAt - b.createdAt;
+  return a.priority - b.priority || a.minutes - b.minutes || a.createdAt - b.createdAt;
 }
 
 /** Seconds left on a running task (negative once overdue). Frozen while the plan is on a break. */
