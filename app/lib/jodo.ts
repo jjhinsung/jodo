@@ -16,7 +16,8 @@ export type Task = {
 
 /**
  * A break: every running timer in the plan is frozen until `until`.
- * `thenNext` = a between-tasks break: when it ends, the next task starts by itself.
+ * `thenNext` = a between-tasks break: when it ends you're back to picking your next task
+ * (with the one-minute clock running again).
  */
 export type Pause = { startedAt: number; until: number; thenNext?: boolean };
 
@@ -28,8 +29,14 @@ export type Plan = {
   /** Once you go Strike, the plan is locked in — no edits until every task is done. */
   locked: boolean;
   pause?: Pause;
-  /** Just finished a task: a short countdown to choose "next task" or "break" (auto-break if you don't). */
-  between?: { at: number };
+  /**
+   * Just finished a task (or a break ended): a short countdown to pick a task or take a break.
+   * Pick neither and a random task starts for you.
+   * `picking` = they chose Continue and are now picking their next task — the same clock keeps running.
+   */
+  between?: { at: number; picking?: boolean };
+  /** Seed for the random order Strike shows tasks in (new shuffle each time you lock in). */
+  shuffle?: number;
   createdAt: number;
 };
 
@@ -45,10 +52,8 @@ export type JodoState = {
   saved: SavedPlan[];
 };
 
-/** After finishing a task you get this long to choose… */
+/** After finishing a task (or a break) you get this long to pick — otherwise a random task starts. */
 export const DECIDE_SECONDS = 60;
-/** …otherwise you're put on a break of this many minutes, then the next task starts. */
-export const AUTO_BREAK_MINUTES = 3;
 
 export const PRIORITIES = [1, 2, 3];
 export const PRIORITY_LABELS: Record<number, string> = { 1: "High", 2: "Medium", 3: "Low" };
@@ -120,7 +125,7 @@ function normalizePlan(raw: unknown): Plan | null {
   const p = raw as Record<string, unknown>;
   if (typeof p.id !== "string") return null;
   const pause = p.pause as Pause | undefined;
-  const between = p.between as { at?: unknown } | undefined;
+  const between = p.between as { at?: unknown; picking?: unknown } | undefined;
   return {
     id: p.id,
     name: typeof p.name === "string" && p.name.trim() ? p.name : "Untitled",
@@ -130,7 +135,11 @@ function normalizePlan(raw: unknown): Plan | null {
       pause && typeof pause.startedAt === "number" && typeof pause.until === "number"
         ? { startedAt: pause.startedAt, until: pause.until, thenNext: Boolean(pause.thenNext) || undefined }
         : undefined,
-    between: between && typeof between.at === "number" ? { at: between.at } : undefined,
+    between:
+      between && typeof between.at === "number"
+        ? { at: between.at, picking: Boolean(between.picking) || undefined }
+        : undefined,
+    shuffle: typeof p.shuffle === "number" ? p.shuffle : undefined,
     createdAt: Number(p.createdAt) || 0,
   };
 }
@@ -300,7 +309,15 @@ export function resetPlan(id: string) {
 
 /** Commit to a plan: from now on it can't be edited until every task is done. */
 export function lockPlan(id: string) {
-  updatePlan((p) => (p.locked || !p.tasks.some((t) => t.status !== "done") ? p : { ...p, locked: true }), id);
+  updatePlan(
+    (p) => (p.locked || !p.tasks.some((t) => t.status !== "done") ? p : { ...p, locked: true, shuffle: newSeed() }),
+    id,
+  );
+}
+
+/** Deal Strike's tasks out in a fresh random order. */
+export function shuffleTasks(planId?: string) {
+  updatePlan((p) => ({ ...p, shuffle: newSeed() }), planId);
 }
 
 // ---------- task actions (active plan) ----------
@@ -373,16 +390,15 @@ export function completeTask(id: string) {
   });
 }
 
-/** From the between-tasks countdown: go straight into a task (the top one if none given). */
-export function continueStrike(id?: string) {
-  updatePlan((p) => {
-    const next = id ?? p.tasks.filter((t) => t.status === "todo").sort(byImportance)[0]?.id;
-    if (!next || p.pause) return { ...p, between: undefined };
-    return withStarted(p, next, Date.now());
-  });
+/**
+ * From the between-tasks pop-up: "Continue" → back to the next-task choices to pick one.
+ * The decide clock keeps running, so picking nothing still ends in the automatic break.
+ */
+export function continueStrike() {
+  updatePlan((p) => (p.between && !p.between.picking ? { ...p, between: { ...p.between, picking: true } } : p));
 }
 
-/** From the between-tasks countdown: take a break; the next task starts when it ends. */
+/** From the between-tasks countdown: take a break. When it ends you pick your next task again. */
 export function breakThenNext(minutes: number, startedAt = Date.now()) {
   updatePlan((p) => ({
     ...p,
@@ -391,12 +407,20 @@ export function breakThenNext(minutes: number, startedAt = Date.now()) {
   }));
 }
 
-/** Didn't choose in time → automatic short break, timed from when the countdown ran out. */
+/**
+ * Didn't pick a task or a break in time → a random one of the tasks on offer starts,
+ * timed from the moment the countdown ran out.
+ */
 export function settleBetween(now = Date.now()) {
-  const p = activePlan(getSnapshot());
-  if (!p.between) return;
-  const deadline = p.between.at + DECIDE_SECONDS * 1000;
-  if (now >= deadline) breakThenNext(AUTO_BREAK_MINUTES, deadline);
+  updatePlan((p, s) => {
+    if (!p.between || p.pause) return p;
+    const deadline = p.between.at + DECIDE_SECONDS * 1000;
+    if (now < deadline) return p;
+    const offered = strikeQueue(p).slice(0, Math.max(1, s.visibleCount));
+    if (offered.length === 0) return { ...p, between: undefined };
+    const pick = offered[Math.floor(Math.random() * offered.length)];
+    return withStarted(p, pick.id, deadline);
+  });
 }
 
 /** Put a finished task back in the to-do pile. */
@@ -436,10 +460,9 @@ export function resumePlan() {
         return { ...t, pausedMs: (t.pausedMs ?? 0) + frozen };
       }),
     };
-    // a between-tasks break rolls straight into the next task — no stopping
-    if (pause.thenNext && !resumed.tasks.some((t) => t.status === "active")) {
-      const next = resumed.tasks.filter((t) => t.status === "todo").sort(byImportance)[0];
-      if (next) return withStarted(resumed, next.id, end);
+    // after a between-tasks break you choose again — the one-minute pick clock starts when the break ends
+    if (pause.thenNext && !resumed.tasks.some((t) => t.status === "active") && strikeQueue(resumed).length > 0) {
+      return { ...resumed, between: { at: end, picking: true } };
     }
     return resumed;
   });
@@ -504,6 +527,38 @@ export function setMultitask(on: boolean) {
 }
 
 // ---------- helpers ----------
+
+function newSeed() {
+  return Math.floor(Math.random() * 2 ** 31);
+}
+
+/** Small deterministic hash, so a shuffle stays put between re-renders and reloads. */
+function hash(str: string) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** Put tasks in the random order given by `seed` (same seed → same order). */
+export function shuffled<T extends { id: string }>(tasks: T[], seed: number): T[] {
+  return [...tasks].sort((a, b) => hash(`${seed}:${a.id}`) - hash(`${seed}:${b.id}`) || a.id.localeCompare(b.id));
+}
+
+/** The plan's shuffle seed (plans locked before shuffling existed get a fixed one). */
+export function planSeed(p: Plan) {
+  return p.shuffle ?? hash(p.id);
+}
+
+/** The to-do tasks in the random order Strike deals them out. */
+export function strikeQueue(p: Plan): Task[] {
+  return shuffled(
+    p.tasks.filter((t) => t.status === "todo"),
+    planSeed(p),
+  );
+}
 
 /** Most important first; ties go to the quicker task, then the older one. */
 export function byImportance(a: Task, b: Task) {

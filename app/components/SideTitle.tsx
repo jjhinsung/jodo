@@ -2,26 +2,22 @@ import TransitionLink from "./TransitionLink";
 
 type Props = {
   word: string; // shown one letter per line, e.g. "PLAN"
-  borderClass: string; // right-edge divider colour
 };
 
 /**
- * Left column: JT logo pinned top-left (same spot and size as on the home page),
- * the page name stacked vertically in the middle.
+ * Left column: Home button pinned top-left (same spot and size as on the home page),
+ * the page name stacked vertically in the middle. No divider — it sits on the page background.
  */
-export default function SideTitle({ word, borderClass }: Props) {
+export default function SideTitle({ word }: Props) {
   return (
-    <aside
-      data-dirt
-      className={`sticky top-0 z-10 h-screen w-24 sm:w-28 shrink-0 flex flex-col items-center border-r ${borderClass}`}
-    >
+    <aside data-dirt className="sticky top-0 z-10 h-screen w-24 sm:w-28 shrink-0 flex flex-col items-center">
       <TransitionLink
         kind="slide"
         href="/"
-        aria-label="Jodo home"
+        aria-label="Home"
         className="absolute top-6 left-6 flex items-center justify-center w-14 h-14 rounded-xl bg-[#F2E9DC] shadow-sm hover:bg-white transition-colors"
       >
-        <span className="text-xl font-bold tracking-tight text-neutral-950">JT</span>
+        <span className="text-sm font-bold tracking-tight text-neutral-950">Home</span>
       </TransitionLink>
 
       <h1

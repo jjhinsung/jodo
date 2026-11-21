@@ -8,10 +8,11 @@ type Props = {
   onConfirm: () => void;
   className: string;
   armedClassName: string;
+  ariaLabel?: string;
 };
 
 /** Destructive button that needs a second tap within 3 seconds. */
-export default function ConfirmButton({ label, confirmLabel, onConfirm, className, armedClassName }: Props) {
+export default function ConfirmButton({ label, confirmLabel, onConfirm, className, armedClassName, ariaLabel }: Props) {
   const [armed, setArmed] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -32,6 +33,7 @@ export default function ConfirmButton({ label, confirmLabel, onConfirm, classNam
         setArmed(true);
         timer.current = setTimeout(() => setArmed(false), 3000);
       }}
+      aria-label={armed ? `${confirmLabel} Tap again to confirm` : ariaLabel}
       className={`${className} ${armed ? armedClassName : ""}`}
     >
       {armed ? confirmLabel : label}

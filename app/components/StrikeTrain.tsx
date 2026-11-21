@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { PRIORITY_COLORS, byImportance, secondsLeft, type Pause, type Task } from "../lib/jodo";
+import { PRIORITY_COLORS, secondsLeft, shuffled, type Pause, type Task } from "../lib/jodo";
 
 /**
  * A little steam train along the bottom of the Strike page that shows how far
@@ -20,15 +20,19 @@ const H = 150; // strip height (px)
 const TRACK_Y = H - 26; // rail top
 const START_X = 150; // leaves room for the carriages behind the engine
 
-type Props = { tasks: Task[]; pause?: Pause };
+type Props = { tasks: Task[]; pause?: Pause; seed: number };
 type Puff = { x: number; y: number; vx: number; vy: number; r: number; grow: number; life: number; dark: boolean };
 type Coin = { x: number; y: number; vx: number; vy: number; life: number; spin: number };
 
 /** Route order: finished stations first, then whatever is running, then what's next. */
-function route(tasks: Task[]) {
+function route(tasks: Task[], seed: number) {
   const done = tasks.filter((t) => t.status === "done").sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0));
   const active = tasks.filter((t) => t.status === "active").sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0));
-  const todo = tasks.filter((t) => t.status === "todo").sort(byImportance);
+  // upcoming stations follow the same shuffled order Strike deals tasks in
+  const todo = shuffled(
+    tasks.filter((t) => t.status === "todo"),
+    seed,
+  );
   return [...done, ...active, ...todo];
 }
 
@@ -42,13 +46,13 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
-export default function StrikeTrain({ tasks, pause }: Props) {
+export default function StrikeTrain({ tasks, pause, seed }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const latest = useRef({ tasks, pause });
+  const latest = useRef({ tasks, pause, seed });
 
   useEffect(() => {
-    latest.current = { tasks, pause };
-  }, [tasks, pause]);
+    latest.current = { tasks, pause, seed };
+  }, [tasks, pause, seed]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -262,8 +266,8 @@ export default function StrikeTrain({ tasks, pause }: Props) {
       last = perfNow;
       const t = perfNow / 1000;
       const now = Date.now();
-      const { tasks: all, pause: brk } = latest.current;
-      const list = route(all);
+      const { tasks: all, pause: brk, seed: order } = latest.current;
+      const list = route(all, order);
       const n = list.length;
 
       // ---- the route: station spacing follows each task's time ----

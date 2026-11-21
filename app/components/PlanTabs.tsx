@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { setActivePlan, type Plan } from "../lib/jodo";
+import { deletePlan, setActivePlan, type Plan } from "../lib/jodo";
+import ConfirmButton from "./ConfirmButton";
 
 /** Drag-and-drop type for a saved plan card being dragged onto the plans list. */
 export const SAVED_DRAG_TYPE = "application/x-jodo-saved";
@@ -20,7 +21,8 @@ const THEMES = {
     ring: "ring-[#93C5FD]/40",
     // sidebar list: light-touch, sits right on the dirt
     colOn: "bg-[#F2E9DC]/10 border-[#C9A27E]/50 text-[#F2E9DC]",
-    colOff: "bg-transparent border-transparent text-[#d9c4aa] hover:bg-[#3a281c]/50 hover:text-[#F2E9DC]",
+    colOff:
+      "bg-transparent border-transparent text-[#d9c4aa] hover:bg-[#3a281c]/50 hover:text-[#F2E9DC]",
     colCount: "text-[#a88b72]",
     colSub: "text-[#8a6e57]",
   },
@@ -36,23 +38,42 @@ const THEMES = {
     heading: "text-neutral-500",
     ring: "ring-[#93C5FD]/40",
     colOn: "bg-white/[0.07] border-neutral-600 text-white",
-    colOff: "bg-transparent border-transparent text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200",
+    colOff:
+      "bg-transparent border-transparent text-neutral-400 hover:bg-white/[0.04] hover:text-neutral-200",
     colCount: "text-neutral-500",
     colSub: "text-neutral-600",
   },
 };
 
-export function LockIcon({ className = "w-3.5 h-3.5" }: { className?: string }) {
+export function LockIcon({
+  className = "w-3.5 h-3.5",
+}: {
+  className?: string;
+}) {
   return (
-    <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" className={className}>
+    <svg
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
       <path d="M4.5 7V5a3.5 3.5 0 1 1 7 0v2h.5A1.5 1.5 0 0 1 13.5 8.5v5A1.5 1.5 0 0 1 12 15H4a1.5 1.5 0 0 1-1.5-1.5v-5A1.5 1.5 0 0 1 4 7h.5Zm1.5 0h4V5a2 2 0 1 0-4 0v2Z" />
     </svg>
   );
 }
 
-export function BookmarkIcon({ className = "w-3.5 h-3.5" }: { className?: string }) {
+export function BookmarkIcon({
+  className = "w-3.5 h-3.5",
+}: {
+  className?: string;
+}) {
   return (
-    <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" className={className}>
+    <svg
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      aria-hidden="true"
+      className={className}
+    >
       <path d="M4 1.5h8A1.5 1.5 0 0 1 13.5 3v11.6a.5.5 0 0 1-.8.4L8 11.6l-4.7 3.4a.5.5 0 0 1-.8-.4V3A1.5 1.5 0 0 1 4 1.5Z" />
     </svg>
   );
@@ -72,13 +93,22 @@ type Props = {
 };
 
 /** Every plan ("Clean the house", "Homework", …) — a vertical list in the sidebar, or a row on phones. */
-export default function PlanTabs({ plans, activeId, theme, layout = "row", onNew, saved, onDropSaved }: Props) {
+export default function PlanTabs({
+  plans,
+  activeId,
+  theme,
+  layout = "row",
+  onNew,
+  saved,
+  onDropSaved,
+}: Props) {
   const t = THEMES[theme];
   const col = layout === "column";
   const [over, setOver] = useState<string | null>(null); // plan id, "new", or null
   const [dragging, setDragging] = useState(false);
 
-  const isSavedDrag = (e: React.DragEvent) => Boolean(onDropSaved) && e.dataTransfer.types.includes(SAVED_DRAG_TYPE);
+  const isSavedDrag = (e: React.DragEvent) =>
+    Boolean(onDropSaved) && e.dataTransfer.types.includes(SAVED_DRAG_TYPE);
 
   const dropProps = (target: string, planId?: string) =>
     onDropSaved
@@ -143,16 +173,29 @@ export default function PlanTabs({ plans, activeId, theme, layout = "row", onNew
       <span className={col ? "flex-1 text-left" : ""}>Saved plans</span>
       {saved.count > 0 &&
         (col ? (
-          <span className={`text-[11px] font-normal ${t.colCount}`}>{saved.count}</span>
+          <span className={`text-[11px] font-normal ${t.colCount}`}>
+            {saved.count}
+          </span>
         ) : (
-          <span className={`rounded-full px-1.5 text-[11px] leading-5 ${saved.open ? t.countOn : t.countOff}`}>
+          <span
+            className={`rounded-full px-1.5 text-[11px] leading-5 ${saved.open ? t.countOn : t.countOff}`}
+          >
             {saved.count}
           </span>
         ))}
     </button>
   );
 
-  const items = plans.map((p) => {
+  // Sidebar order: locked-in plans first, then the rest, finished plans last (stable within each group)
+  const rank = (p: Plan) =>
+    p.locked
+      ? 0
+      : p.tasks.length > 0 && p.tasks.every((x) => x.status === "done")
+        ? 2
+        : 1;
+  const ordered = col ? [...plans].sort((a, b) => rank(a) - rank(b)) : plans;
+
+  const items = ordered.map((p) => {
     const on = p.id === activeId;
     const open = p.tasks.filter((x) => x.status !== "done");
     const left = open.length;
@@ -162,44 +205,79 @@ export default function PlanTabs({ plans, activeId, theme, layout = "row", onNew
     const allDone = p.tasks.length > 0 && left === 0;
 
     if (col) {
-      // finished plans get a faint green wash so they're easy to tell apart
-      const look = allDone
+      // locked-in plans get a blue wash, finished plans a faint green one
+      const look = p.locked
         ? on
-          ? "bg-green-500/20 border-transparent text-green-50"
-          : "bg-green-500/10 border-transparent text-green-100/90 hover:bg-green-500/15"
-        : on
-          ? t.colOn
-          : t.colOff;
+          ? "bg-[#3B82F6]/30 border-transparent text-white"
+          : "bg-[#3B82F6]/15 border-transparent text-blue-100 hover:bg-[#3B82F6]/25"
+        : allDone
+          ? on
+            ? "bg-green-500/20 border-transparent text-green-50"
+            : "bg-green-500/10 border-transparent text-green-100/90 hover:bg-green-500/15"
+          : on
+            ? t.colOn
+            : t.colOff;
       return (
-        <button
+        <div
           key={p.id}
-          type="button"
-          role="tab"
-          aria-selected={on}
-          onClick={() => setActivePlan(p.id)}
           {...(canDrop ? dropProps(p.id, p.id) : {})}
-          className={`w-full rounded-lg border px-3 py-2 text-left transition-all ${look} ${hovering ? t.drop : ""}`}
+          className={`group flex items-stretch rounded-lg border transition-all ${look} ${hovering ? t.drop : ""}`}
         >
-          <span className="flex items-center gap-2">
-            {p.locked && <LockIcon className="w-3.5 h-3.5 shrink-0" />}
-            <span className="min-w-0 flex-1 truncate text-[15px] font-semibold">{p.name}</span>
-            {left > 0 && !hovering && <span className={`shrink-0 text-xs tabular-nums ${t.colCount}`}>{left}</span>}
-            {allDone && !hovering && <span className="shrink-0 text-xs text-green-400">✓</span>}
-          </span>
-          <span
-            className={`mt-0.5 block truncate text-xs leading-4 ${
-              hovering ? "" : allDone ? "text-green-400/80" : t.colSub
-            }`}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={on}
+            onClick={() => setActivePlan(p.id)}
+            className="min-w-0 flex-1 py-2 pl-3 pr-1 text-left"
           >
-            {hovering
-              ? "+ add these tasks here"
-              : p.tasks.length === 0
-                ? "Empty"
-                : left === 0
-                  ? "All done"
-                  : `${left} left · ~${mins} min${p.locked ? " · striking" : ""}`}
-          </span>
-        </button>
+            <span className="flex items-center gap-2">
+              {p.locked && <LockIcon className="w-3.5 h-3.5 shrink-0" />}
+              <span className="min-w-0 flex-1 truncate text-[15px] font-semibold">
+                {p.name}
+              </span>
+              {left > 0 && !hovering && (
+                <span
+                  className={`shrink-0 text-xs tabular-nums ${p.locked ? "text-[#93C5FD]" : t.colCount}`}
+                >
+                  {left}
+                </span>
+              )}
+              {allDone && !hovering && (
+                <span className="shrink-0 text-xs text-green-400">✓</span>
+              )}
+            </span>
+            <span
+              className={`mt-0.5 block truncate text-xs leading-4 ${
+                hovering
+                  ? ""
+                  : p.locked
+                    ? "text-[#93C5FD]/80"
+                    : allDone
+                      ? "text-green-400/80"
+                      : t.colSub
+              }`}
+            >
+              {hovering
+                ? "+ add these tasks here"
+                : p.tasks.length === 0
+                  ? "Empty"
+                  : left === 0
+                    ? "All done"
+                    : `${left} left · ~${mins} min${p.locked ? " · striking" : ""}`}
+            </span>
+          </button>
+          {/* delete: tap ×, then tap "Delete?" within 3 s (you can't delete your only plan) */}
+          {plans.length > 1 && !hovering && (
+            <ConfirmButton
+              label="×"
+              confirmLabel="Delete?"
+              ariaLabel={`Delete plan ${p.name}`}
+              onConfirm={() => deletePlan(p.id)}
+              className="shrink-0 self-center mr-1 rounded-md px-1.5 py-0.5 text-base leading-none opacity-40 transition hover:opacity-100 hover:text-red-400 group-hover:opacity-70 focus-visible:opacity-100"
+              armedClassName="!opacity-100 !text-xs !font-bold bg-red-500/20 !text-red-300 px-2 py-1"
+            />
+          )}
+        </div>
       );
     }
 
@@ -221,7 +299,11 @@ export default function PlanTabs({ plans, activeId, theme, layout = "row", onNew
           <span className="text-[11px]">+ add here</span>
         ) : (
           left > 0 && (
-            <span className={`rounded-full px-1.5 text-[11px] leading-5 ${on ? t.countOn : t.countOff}`}>{left}</span>
+            <span
+              className={`rounded-full px-1.5 text-[11px] leading-5 ${on ? t.countOn : t.countOff}`}
+            >
+              {left}
+            </span>
           )
         )}
       </button>
@@ -232,7 +314,11 @@ export default function PlanTabs({ plans, activeId, theme, layout = "row", onNew
     return (
       <nav aria-label="Plans" className="flex h-full min-h-0 flex-col gap-1">
         <div className="flex items-baseline justify-between px-3 pb-1">
-          <h2 className={`text-xs font-bold uppercase tracking-[0.2em] ${t.heading}`}>Plans</h2>
+          <h2
+            className={`text-xs font-bold uppercase tracking-[0.2em] ${t.heading}`}
+          >
+            Plans
+          </h2>
           <span className={`text-xs ${t.heading}`}>{plans.length}</span>
         </div>
         {newButton}

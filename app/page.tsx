@@ -13,9 +13,9 @@ export default function Home() {
       <HomeSky />
       {/* ===== Hero section — warm beige ===== */}
       <section className="relative z-10 min-h-[70vh] text-[#F2E9DC] flex flex-col justify-start px-6 sm:px-12 pt-40 py-24">
-        {/* Logo placeholder — top left */}
+        {/* Home button — top left (same spot on every page) */}
         <div className="absolute top-6 left-6 flex items-center justify-center w-14 h-14 rounded-xl bg-[#F2E9DC] shadow-sm">
-          <span className="text-xl font-bold tracking-tight text-neutral-950">JT</span>
+          <span className="text-sm font-bold tracking-tight text-neutral-950">Home</span>
         </div>
 
         <div className="max-w-6xl mx-auto text-left">

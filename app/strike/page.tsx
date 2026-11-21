@@ -7,7 +7,6 @@ import SideTitle from "../components/SideTitle";
 import StrikeTrain from "../components/StrikeTrain";
 import TransitionLink from "../components/TransitionLink";
 import {
-  AUTO_BREAK_MINUTES,
   DECIDE_SECONDS,
   FLASH_AFTER_SECONDS,
   breakThenNext,
@@ -17,7 +16,9 @@ import {
   PRIORITY_LABELS,
   priorityStyle,
   activePlan,
-  byImportance,
+  planSeed,
+  shuffleTasks,
+  strikeQueue,
   clearCompleted,
   completeTask,
   formatClock,
@@ -97,7 +98,7 @@ export default function Strike() {
   const running = tasks.filter((t) => t.status === "active");
   const critical = running.filter((t) => left(t) <= 0).sort((a, b) => left(a) - left(b));
   const inProgress = running.filter((t) => left(t) > 0).sort((a, b) => left(a) - left(b));
-  const todo = tasks.filter((t) => t.status === "todo").sort(byImportance);
+  const todo = strikeQueue(plan); // shuffled: tasks come up in random order
   const next = todo.slice(0, visibleCount);
   const done = tasks.filter((t) => t.status === "done").sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
 
@@ -120,28 +121,33 @@ export default function Strike() {
     }
   });
 
-  // Just finished a task and didn't choose within a minute → automatic short break.
+  // Didn't pick a task or a break within the minute → a random task starts (with a ring if it just happened).
   const between = !pause ? plan.between : undefined;
   useEffect(() => {
     if (between && now >= between.at + DECIDE_SECONDS * 1000) {
+      if (now - (between.at + DECIDE_SECONDS * 1000) < 5000) alarm.ring();
       settleBetween(now);
     }
   });
 
   const askingBreak = askKey !== null && askKey === (between ? `b${between.at}` : "run");
 
-  const blocked = Boolean(pause) || Boolean(between) || (!multitask && running.length > 0);
+  // the pop-up is up until they choose Continue; then they're back to picking, clock still running
+  const deciding = Boolean(between && !between.picking);
+  const picking = Boolean(between?.picking);
+  const blocked = Boolean(pause) || deciding || (!multitask && running.length > 0);
   const lastDone = done[0];
+  const pickLeft = between ? Math.min(DECIDE_SECONDS, Math.max(0, Math.ceil((between.at + DECIDE_SECONDS * 1000 - now) / 1000))) : 0;
 
   function handleStart(id: string) {
     alarm.unlock();
     startTask(id);
   }
 
-  function handleContinue(id?: string) {
+  function handleContinue() {
     alarm.unlock();
     setAskKey(null);
-    continueStrike(id);
+    continueStrike();
   }
 
   function startBreak(minutes: number) {
@@ -153,7 +159,7 @@ export default function Strike() {
 
   return (
     <div className={`${inter.className} flex min-h-screen bg-neutral-950 text-neutral-100`}>
-      <SideTitle word="STRIKE" borderClass="border-neutral-800" />
+      <SideTitle word="STRIKE" />
 
       <div className="flex-1 min-w-0 pt-10 pb-56">
         <main className="px-5 sm:px-10 max-w-2xl mx-auto space-y-8">
@@ -292,9 +298,51 @@ export default function Strike() {
           {/* Next tasks — coloured by priority (navy / royal / ice blue) */}
           {todo.length > 0 && (
             <section>
-              <h2 className="mb-1 text-sm font-extrabold uppercase tracking-[0.2em] text-[#93C5FD]">
-                Next {next.length === 1 ? "task" : `${next.length} tasks`}
-              </h2>
+              {/* After "Continue": the same clock keeps running until they pick */}
+              {picking && between && (
+                <div
+                  className={`mb-4 flex items-center gap-4 rounded-xl border-2 px-4 py-3 ${
+                    pickLeft <= 10 ? "border-red-500/70 bg-red-950/40" : "border-[#3B82F6]/60 bg-[#1E3A8A]/25"
+                  }`}
+                >
+                  <span
+                    className={`font-mono text-3xl font-extrabold tabular-nums ${
+                      pickLeft <= 10 ? "animate-pulse text-red-400" : "text-white"
+                    }`}
+                  >
+                    {formatClock(pickLeft)}
+                  </span>
+                  <span className="min-w-0 flex-1 text-sm leading-snug text-neutral-300">
+                    <span className="block font-bold text-white">Pick your next task.</span>
+                    Nothing picked by then → a random one starts for you.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      alarm.unlock();
+                      setAskKey(`b${between.at}`);
+                    }}
+                    className="shrink-0 rounded-lg border border-sky-400/60 px-3 py-1.5 text-xs font-bold text-sky-300 transition-colors hover:bg-sky-400 hover:text-neutral-950"
+                  >
+                    Break
+                  </button>
+                </div>
+              )}
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <h2 className="text-sm font-extrabold uppercase tracking-[0.2em] text-[#93C5FD]">
+                  Next {next.length === 1 ? "task" : `${next.length} tasks`}
+                </h2>
+                {todo.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => shuffleTasks(plan.id)}
+                    title="Deal the remaining tasks in a new random order"
+                    className="flex items-center gap-1.5 rounded-lg border border-neutral-700 px-2.5 py-1 text-xs font-semibold text-neutral-300 transition-colors hover:border-[#93C5FD] hover:text-white"
+                  >
+                    <ShuffleIcon /> Shuffle
+                  </button>
+                )}
+              </div>
               <p className="mb-3 text-sm text-neutral-400">
                 {pause
                   ? "On a break — these wait for you."
@@ -402,16 +450,15 @@ export default function Strike() {
       <div className="pointer-events-none fixed bottom-0 right-0 left-24 sm:left-28 z-20">
         <div className="h-16 bg-gradient-to-t from-neutral-950 to-transparent" />
         <div className="bg-neutral-950">
-          <StrikeTrain tasks={tasks} pause={pause} />
+          <StrikeTrain tasks={tasks} pause={pause} seed={planSeed(plan)} />
         </div>
       </div>
 
-      {between && (
+      {between && deciding && (
         <BetweenTasks
           at={between.at}
           now={now}
           finished={lastDone}
-          next={next}
           onContinue={handleContinue}
           onBreak={() => {
             alarm.unlock();
@@ -425,11 +472,21 @@ export default function Strike() {
           onPick={startBreak}
           onCancel={() => setAskKey(null)}
           cancelLabel={between ? "Back" : undefined}
-          note={between ? "When the break runs out, your next task starts by itself." : undefined}
+          note={between ? "When the break runs out, you pick your next task." : undefined}
         />
       )}
-      {pause && <BreakTimer pause={pause} now={now} nextUp={pause.thenNext ? todo[0] : undefined} />}
+      {pause && <BreakTimer pause={pause} now={now} thenPick={Boolean(pause.thenNext && todo.length > 0)} />}
     </div>
+  );
+}
+
+function ShuffleIcon({ className = "w-3.5 h-3.5" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>
+      <path d="M2 4h2.5c1.2 0 2 .6 2.7 1.6l1.6 2.8c.7 1 1.5 1.6 2.7 1.6H14" />
+      <path d="M2 12h2.5c1.2 0 2-.6 2.7-1.6M9.8 5.6c.7-1 1.5-1.6 2.7-1.6H14" />
+      <path d="M12 2l2 2-2 2M12 10l2 2-2 2" />
+    </svg>
   );
 }
 
@@ -458,14 +515,13 @@ function DoneButton({ task, className }: { task: Task; className: string }) {
 
 /**
  * Shown right after you finish a task. A one-minute clock runs so the strike never just stops:
- * pick your next task, or take a break. Choose nothing and you get an automatic short break,
- * after which the next task starts by itself.
+ * Continue (back to picking your next task) or take a break. Choose nothing and you get an
+ * automatic short break, after which the next task starts by itself.
  */
 function BetweenTasks({
   at,
   now,
   finished,
-  next,
   onContinue,
   onBreak,
   paused,
@@ -473,31 +529,28 @@ function BetweenTasks({
   at: number;
   now: number;
   finished?: Task;
-  next: Task[];
-  onContinue: (id?: string) => void;
+  onContinue: () => void;
   onBreak: () => void;
   paused: boolean; // the break picker is open on top
 }) {
-  const remaining = Math.max(0, Math.ceil((at + DECIDE_SECONDS * 1000 - now) / 1000));
+  const remaining = Math.min(DECIDE_SECONDS, Math.max(0, Math.ceil((at + DECIDE_SECONDS * 1000 - now) / 1000)));
   const frac = remaining / DECIDE_SECONDS;
   const urgent = remaining <= 10;
-  const [first, ...rest] = next;
-  const firstColors = first ? PRIORITY_COLORS[first.priority] : undefined;
 
-  // Enter = straight into the top task, B = break
+  // Enter = continue, B = break
   useEffect(() => {
     if (paused) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        onContinue(first?.id);
+        onContinue();
       } else if (e.key === "b" || e.key === "B") {
         onBreak();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [paused, first?.id, onContinue, onBreak]);
+  }, [paused, onContinue, onBreak]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-5 backdrop-blur-[3px]">
@@ -530,51 +583,28 @@ function BetweenTasks({
           />
         </div>
         <p className="mt-2 text-xs text-neutral-500">
-          No choice by then → automatic {AUTO_BREAK_MINUTES} min break, then your next task starts.
+          No choice by then → a random task starts for you.
         </p>
 
-        {first && firstColors && (
+        <div className="mt-6 grid grid-cols-2 gap-3">
           <button
             type="button"
             autoFocus
-            onClick={() => onContinue(first.id)}
-            style={priorityStyle(first.priority)}
-            className="mt-6 w-full rounded-2xl border-2 px-5 py-4 text-left transition hover:brightness-110"
+            onClick={onContinue}
+            className="rounded-2xl bg-[#3B82F6] px-4 py-4 font-extrabold text-white transition hover:brightness-110"
           >
-            <span className="block text-xs font-bold uppercase tracking-wider" style={{ color: firstColors.sub }}>
-              Next task · Enter ↵
-            </span>
-            <span className="mt-0.5 flex items-baseline justify-between gap-3">
-              <span className="min-w-0 truncate text-lg font-extrabold">{first.action}</span>
-              <span className="shrink-0 font-bold tabular-nums">{first.minutes} min →</span>
-            </span>
+            Continue
+            <span className="block text-[11px] font-semibold text-blue-100/80">Enter ↵</span>
           </button>
-        )}
-
-        {rest.length > 0 && (
-          <div className="mt-2 space-y-2">
-            {rest.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => onContinue(t.id)}
-                style={priorityStyle(t.priority)}
-                className="flex w-full items-baseline justify-between gap-3 rounded-xl border-2 px-4 py-2.5 text-left text-sm opacity-80 transition hover:opacity-100"
-              >
-                <span className="min-w-0 truncate font-bold">{t.action}</span>
-                <span className="shrink-0 tabular-nums">{t.minutes} min</span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={onBreak}
-          className="mt-4 w-full rounded-xl border-2 border-sky-400/60 py-3 text-sm font-bold text-sky-300 transition-colors hover:bg-sky-400 hover:text-neutral-950"
-        >
-          Take a break (B)
-        </button>
+          <button
+            type="button"
+            onClick={onBreak}
+            className="rounded-2xl border-2 border-sky-400/60 px-4 py-4 font-extrabold text-sky-300 transition-colors hover:bg-sky-400 hover:text-neutral-950"
+          >
+            Take a break
+            <span className="block text-[11px] font-semibold opacity-70">B</span>
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -653,7 +683,7 @@ function BreakPicker({
 }
 
 /** Big PAUSED pop-up over a slightly darkened page, with the break's time left. */
-function BreakTimer({ pause, now, nextUp }: { pause: Pause; now: number; nextUp?: Task }) {
+function BreakTimer({ pause, now, thenPick }: { pause: Pause; now: number; thenPick: boolean }) {
   const total = Math.max(1, Math.round((pause.until - pause.startedAt) / 1000));
   const remaining = Math.max(0, Math.round((pause.until - now) / 1000));
   const frac = remaining / total;
@@ -688,15 +718,9 @@ function BreakTimer({ pause, now, nextUp }: { pause: Pause; now: number; nextUp?
         <p className="mt-5 text-neutral-300">
           {urgent ? "Almost time. Get ready." : warning ? "Wrap it up — break's nearly over." : "Breathe. Water. Stretch. The clock is running."}
         </p>
-        {nextUp && (
+        {thenPick && (
           <p className="mt-3 text-sm text-neutral-400">
-            Then straight into{" "}
-            <span
-              className="rounded-md px-2 py-0.5 font-bold"
-              style={priorityStyle(nextUp.priority)}
-            >
-              {nextUp.action}
-            </span>
+            When it ends you&apos;ll pick your next task — you get {DECIDE_SECONDS / 60} minute before one is picked for you.
           </p>
         )}
         <button
@@ -704,7 +728,7 @@ function BreakTimer({ pause, now, nextUp }: { pause: Pause; now: number; nextUp?
           onClick={() => resumePlan()}
           className="mt-6 rounded-xl bg-[#F2E9DC] px-6 py-3 font-bold text-neutral-950 transition-colors hover:bg-white"
         >
-          {nextUp ? "I'm back — start it now" : "I'm back — resume now"}
+          {thenPick ? "I'm back — pick my next task" : "I'm back — resume now"}
         </button>
       </div>
     </div>

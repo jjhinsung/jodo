@@ -73,7 +73,7 @@ export default function PlanPage() {
   return (
     <div data-dirt className={`${inter.className} flex min-h-screen bg-[#2a1c14] text-[#F2E9DC]`}>
       <PlanScenery />
-      <SideTitle word="PLAN" borderClass="border-[#5a4030]" />
+      <SideTitle word="PLAN" />
 
       <div data-dirt className="relative z-10 flex-1 min-w-0 pt-10 pb-44">
         <main data-dirt className="px-5 sm:px-10 max-w-2xl mx-auto">
