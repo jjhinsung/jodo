@@ -6,6 +6,7 @@ import PlanTabs, { LockIcon } from "../components/PlanTabs";
 import SideTitle from "../components/SideTitle";
 import StrikeTrain from "../components/StrikeTrain";
 import TransitionLink from "../components/TransitionLink";
+import { useFloat } from "../components/FloatingTimer";
 import {
   DECIDE_SECONDS,
   FLASH_AFTER_SECONDS,
@@ -83,16 +84,13 @@ export default function Strike() {
   const plan = activePlan(state);
   const { tasks, pause } = plan;
 
-  const [now, setNow] = useState(() => Date.now());
+  // the app-wide clock: keeps full speed while the floating timer is open, even with this tab in the background
+  const float = useFloat();
+  const now = float.now;
   // which moment the break picker was opened for — it closes itself if that moment passes
   const [askKey, setAskKey] = useState<string | null>(null);
   const alarm = useAlarm();
   const alarmed = useRef(new Set<string>());
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
 
   const left = (t: Task) => secondsLeft(t, now, pause);
   const running = tasks.filter((t) => t.status === "active");
@@ -168,12 +166,29 @@ export default function Strike() {
               <PlanTabs plans={state.plans} activeId={plan.id} theme="black" layout="row" />
             </div>
 
-            <div className="flex items-center gap-3">
-              <h2 className="min-w-0 flex-1 truncate text-3xl font-extrabold tracking-tight">{plan.name}</h2>
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="min-w-[10rem] flex-1 truncate text-3xl font-extrabold tracking-tight">{plan.name}</h2>
               {plan.locked && (
                 <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-neutral-700 px-3 py-1 text-xs font-semibold text-neutral-300">
                   <LockIcon /> Locked in
                 </span>
+              )}
+              {float.mode && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    alarm.unlock();
+                    float.toggle();
+                  }}
+                  aria-pressed={float.open}
+                  className={`flex shrink-0 items-center gap-2 rounded-xl border-2 px-4 py-2 text-sm font-bold transition-colors ${
+                    float.open
+                      ? "border-[#3B82F6] bg-[#3B82F6] text-white hover:bg-[#2563EB]"
+                      : "border-neutral-600 text-neutral-200 hover:border-neutral-400"
+                  }`}
+                >
+                  <FloatIcon /> {float.open ? "Floating" : "Float timer"}
+                </button>
               )}
               {running.length > 0 && !pause && (
                 <button
@@ -486,6 +501,15 @@ function ShuffleIcon({ className = "w-3.5 h-3.5" }: { className?: string }) {
       <path d="M2 4h2.5c1.2 0 2 .6 2.7 1.6l1.6 2.8c.7 1 1.5 1.6 2.7 1.6H14" />
       <path d="M2 12h2.5c1.2 0 2-.6 2.7-1.6M9.8 5.6c.7-1 1.5-1.6 2.7-1.6H14" />
       <path d="M12 2l2 2-2 2M12 10l2 2-2 2" />
+    </svg>
+  );
+}
+
+function FloatIcon({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true" className={className}>
+      <rect x="1.5" y="2.5" width="13" height="10" rx="1.5" />
+      <rect x="8" y="7" width="5" height="4" rx="0.8" fill="currentColor" stroke="none" />
     </svg>
   );
 }
