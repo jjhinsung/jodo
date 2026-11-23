@@ -35,7 +35,9 @@ import {
 const inter = Inter({ subsets: ["latin"], weight: ["400", "500", "600", "700", "800"] });
 
 const BREAK_OPTIONS = [2, 5, 10, 15];
-const SIZE = 260;
+// default size: a small landscape rectangle (it can still be resized by dragging its edges)
+const WIDTH = 240;
+const HEIGHT = 150;
 
 type Mode = "window" | "video" | null;
 
@@ -203,7 +205,7 @@ export function FloatProvider({ children }: { children: ReactNode }) {
   async function openWindow() {
     const api = docPiP();
     if (!api) return;
-    const w = await api.requestWindow({ width: SIZE, height: SIZE });
+    const w = await api.requestWindow({ width: WIDTH, height: HEIGHT });
     copyStyles(w.document);
     w.document.documentElement.className = document.documentElement.className;
     w.document.title = "Jodo timer";
@@ -214,8 +216,8 @@ export function FloatProvider({ children }: { children: ReactNode }) {
 
   async function openVideo() {
     const canvas = document.createElement("canvas");
-    canvas.width = SIZE * 2;
-    canvas.height = SIZE * 2;
+    canvas.width = WIDTH * 2;
+    canvas.height = HEIGHT * 2;
     canvasRef.current = canvas;
     paint(canvas, view);
     let video = videoRef.current;
@@ -276,18 +278,18 @@ function FloatCard({ view, onClose }: { view: View; onClose: () => void }) {
   const momentKey = view.kind === "run" ? `run:${view.task.id}` : view.kind;
   const choosingBreak = breakFor === momentKey && (view.kind === "decide" || view.kind === "pick" || view.kind === "run");
 
-  const shell = "flex h-screen w-screen flex-col gap-2 p-3 select-none overflow-hidden";
-  const btn = "rounded-lg px-3 py-1.5 text-xs font-bold transition-colors";
+  const shell = "flex h-screen w-screen flex-col gap-1.5 px-2.5 py-2 select-none overflow-hidden";
+  const btn = "rounded-md px-2.5 py-1 text-xs font-bold transition-colors";
   // same sky-blue outline as the break buttons on the Strike page
   const breakBtn = "border-2 border-sky-400/70 text-sky-300 hover:bg-sky-400 hover:text-neutral-950";
-  const clockStyle ={ fontSize: "min(27vw, 40vh)" };
+  const clockStyle = { fontSize: "min(25vw, 42vh)" };
 
   const close = (
     <button
       type="button"
       onClick={onClose}
       aria-label="Close floating timer"
-      className="absolute right-2 top-1.5 rounded px-1.5 text-sm leading-none opacity-50 hover:opacity-100"
+      className="absolute right-1.5 top-1 rounded px-1 text-sm leading-none opacity-50 hover:opacity-100"
     >
       ×
     </button>
@@ -298,7 +300,7 @@ function FloatCard({ view, onClose }: { view: View; onClose: () => void }) {
       <div className={`${shell} relative items-center justify-center bg-neutral-900`}>
         {close}
         <p className="text-xs font-bold uppercase tracking-[0.2em] text-sky-300">Break for</p>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid w-full grid-cols-4 gap-1.5">
           {BREAK_OPTIONS.map((m) => (
             <button
               key={m}
@@ -308,9 +310,9 @@ function FloatCard({ view, onClose }: { view: View; onClose: () => void }) {
                 else breakThenNext(m);
                 setBreakFor(null);
               }}
-              className={`${btn} bg-sky-400 text-neutral-950 hover:bg-sky-300 text-sm`}
+              className={`${btn} bg-sky-400 px-0 py-2 text-neutral-950 hover:bg-sky-300`}
             >
-              {m} min
+              {m}m
             </button>
           ))}
         </div>
@@ -329,7 +331,7 @@ function FloatCard({ view, onClose }: { view: View; onClose: () => void }) {
     return (
       <div className={`${shell} relative`} style={{ backgroundColor: bg, color: fg }}>
         {close}
-        <p className="pr-5 text-sm font-bold leading-tight line-clamp-2 break-words">{view.task.action}</p>
+        <p className="truncate pr-5 text-xs font-bold leading-tight">{view.task.action}</p>
         <div className="flex flex-1 items-center justify-center font-mono font-extrabold tabular-nums leading-none" style={clockStyle}>
           {formatClock(view.seconds)}
         </div>
@@ -348,8 +350,8 @@ function FloatCard({ view, onClose }: { view: View; onClose: () => void }) {
           >
             Pause
           </button>
+          {view.more > 0 && <span className="shrink-0 text-[10px] opacity-75">+{view.more}</span>}
         </div>
-        {view.more > 0 && <p className="-mt-1 text-center text-[10px] opacity-75">+{view.more} more running</p>}
       </div>
     );
   }
@@ -361,23 +363,24 @@ function FloatCard({ view, onClose }: { view: View; onClose: () => void }) {
     return (
       <div className={`${shell} relative bg-neutral-900`}>
         {close}
-        <p className="text-xs font-extrabold uppercase tracking-[0.25em] text-sky-300">☕ Paused</p>
+        <p className="pr-5 text-xs font-extrabold uppercase tracking-[0.2em] text-sky-300">
+          ☕ Paused <span className="font-semibold tracking-[0.1em] text-neutral-400">· break left</span>
+        </p>
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center">
           <div
             className={`font-mono font-extrabold tabular-nums leading-none ${urgent ? "animate-pulse" : ""}`}
-            style={{ ...clockStyle, fontSize: "min(25vw, 32vh)", color }}
+            style={{ fontSize: "min(22vw, 30vh)", color }}
           >
             {formatClock(view.seconds)}
           </div>
-          <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-neutral-400">left on your break</p>
-          <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-neutral-800">
+          <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-neutral-800">
             <div
               className="h-full rounded-full"
               style={{ width: `${(view.seconds / view.total) * 100}%`, background: color, transition: "width 1s linear, background 0.3s" }}
             />
           </div>
           {view.task && view.taskSeconds !== undefined && (
-            <p className="mt-2 flex w-full items-center justify-between gap-2 text-xs text-neutral-400">
+            <p className="mt-1 flex w-full items-center justify-between gap-2 text-[11px] leading-tight text-neutral-400">
               <span className="truncate">⏸ {view.task.action}</span>
               <span className="shrink-0 font-mono tabular-nums">{formatClock(view.taskSeconds)}</span>
             </p>
@@ -422,21 +425,28 @@ function FloatCard({ view, onClose }: { view: View; onClose: () => void }) {
         {close}
         {view.kind === "pick" ? (
           <div className="pr-5">
-            <div className="flex items-end justify-between gap-2">
-              <div className="leading-tight">
-                <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#93C5FD]">Pick next</p>
-                <p className="text-[10px] text-neutral-400">or one starts for you</p>
+            <div className="flex items-center justify-between gap-2">
+              <div className="shrink-0 leading-tight">
+                <p className="whitespace-nowrap text-[11px] font-bold uppercase tracking-[0.08em] text-[#93C5FD]">Pick next</p>
+                <p className="whitespace-nowrap text-[9px] text-neutral-400">or auto-picked</p>
               </div>
               <span
-                className={`font-mono text-3xl font-extrabold leading-none tabular-nums ${
+                className={`font-mono text-[22px] font-extrabold leading-none tabular-nums ${
                   view.seconds <= 10 ? "text-red-400" : "text-white"
                 }`}
               >
-                {formatClock(view.seconds)}
+                {formatClock(view.seconds).replace(/^0/, "")}
               </span>
+              <button
+                type="button"
+                onClick={() => setBreakFor(momentKey)}
+                className={`${btn} ${breakBtn} shrink-0 px-2 py-0.5 text-[11px]`}
+              >
+                Break
+              </button>
             </div>
             {/* the minute draining away */}
-            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-neutral-800">
+            <div className="mt-1 h-1 overflow-hidden rounded-full bg-neutral-800">
               <div
                 className={`h-full rounded-full transition-[width] duration-1000 ease-linear ${
                   view.seconds <= 10 ? "bg-red-400" : "bg-[#3B82F6]"
@@ -446,9 +456,9 @@ function FloatCard({ view, onClose }: { view: View; onClose: () => void }) {
             </div>
           </div>
         ) : (
-          <p className="pr-5 text-xs font-bold uppercase tracking-[0.2em] text-[#93C5FD]">Pick next</p>
+          <p className="pr-5 text-[11px] font-bold uppercase tracking-[0.15em] text-[#93C5FD]">Pick next</p>
         )}
-        <div className="flex min-h-0 flex-1 flex-col justify-center gap-1.5 overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col justify-center gap-1 overflow-hidden">
           {view.offered.map((t) => {
             const c = PRIORITY_COLORS[t.priority] ?? PRIORITY_COLORS[2];
             return (
@@ -457,7 +467,7 @@ function FloatCard({ view, onClose }: { view: View; onClose: () => void }) {
                 type="button"
                 onClick={() => startTask(t.id)}
                 style={{ backgroundColor: c.bg, color: c.fg }}
-                className="flex shrink-0 items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-left text-sm font-semibold hover:brightness-110"
+                className="flex shrink-0 items-center justify-between gap-2 rounded-md px-2.5 py-1 text-left text-xs font-semibold hover:brightness-110"
               >
                 <span className="truncate">{t.action}</span>
                 <span className="shrink-0 text-xs" style={{ color: c.sub }}>
@@ -467,11 +477,6 @@ function FloatCard({ view, onClose }: { view: View; onClose: () => void }) {
             );
           })}
         </div>
-        {view.kind === "pick" && (
-          <button type="button" onClick={() => setBreakFor(momentKey)} className={`${btn} ${breakBtn}`}>
-            Take a break
-          </button>
-        )}
       </div>
     );
   }
@@ -543,7 +548,7 @@ function paint(canvas: HTMLCanvasElement, v: View) {
   ctx.fillText(fit(ctx, top, W * 0.88), W / 2, H * 0.17);
 
   if (clock) {
-    ctx.font = `800 ${W * (clock.length > 6 ? 0.19 : 0.25)}px ui-monospace, Menlo, monospace`;
+    ctx.font = `800 ${Math.min(W * (clock.length > 6 ? 0.19 : 0.25), H * 0.42)}px ui-monospace, Menlo, monospace`;
     ctx.fillText(clock, W / 2, H * 0.52);
   } else {
     ctx.font = `800 ${W * 0.16}px ${sans}`;
