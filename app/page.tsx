@@ -7,6 +7,40 @@ const inter = Inter({ subsets: ["latin"], weight: ["400", "500", "600", "700", "
 
 const unbounded = Unbounded({ subsets: ["latin"], weight: ["900"] });
 
+const STEPS = [
+  {
+    title: "Plan",
+    body: "Add your tasks. Type a name, Enter, a time limit, Enter, then pick a priority with the arrow keys and Enter. Navy is high, blue is medium, ice blue is low.",
+  },
+  {
+    title: "Lock it in",
+    body: "Hit “Lock it in — go Strike.” A locked plan can’t be edited, so there’s no tweaking the list instead of doing it.",
+  },
+  {
+    title: "Strike",
+    body: "Jodo deals you 1–3 tasks in a random order. Pick one and its timer starts. Hit Mark done when you finish. Go over time and it turns red.",
+  },
+  {
+    title: "Keep the streak",
+    body: "After each task you get one minute: continue to your next task or take a break. Choose nothing and a random task starts for you.",
+  },
+  {
+    title: "Float the timer",
+    body: "On Strike, click Float timer. A small window stays on top of every app with your countdown, Done, and Pause. Works best in Chrome or Edge.",
+  },
+  {
+    title: "Finish",
+    body: "Strike every task and the plan unlocks and turns green. Start a new plan whenever you’re ready.",
+  },
+];
+
+const TIPS = [
+  { label: "Pause:", body: "pick a break length. Your timers freeze until the break ends." },
+  { label: "Save plan:", body: "reuse routines you do often. Drag a saved plan onto a tab, or open a new tab from it." },
+  { label: "Plans list:", body: "every plan sits on the right side. Locked plans are at the top and finished ones are at the bottom." },
+  { label: "Your data:", body: "plans are saved in this browser, so use the same browser on the same device." },
+];
+
 export default function Home() {
   return (
     <div className={`${inter.className} relative min-h-screen bg-neutral-950`}>
@@ -80,10 +114,28 @@ export default function Home() {
       </section>
 
       {/* ===== Bottom section — black gradient ===== */}
-      <section className="relative z-10 min-h-[50vh] bg-gradient-to-b from-transparent to-black text-white flex items-center justify-center px-6 py-24">
+      <section className="relative z-10 min-h-[50vh] bg-gradient-to-b from-transparent to-black text-white flex flex-col items-center px-6 py-24">
         <div className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full border border-white/20 text-base font-semibold tracking-widest uppercase text-white/70">
           How to Use
         </div>
+
+        <ol className="mt-12 grid w-full max-w-5xl gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {STEPS.map((s, i) => (
+            <li key={s.title} className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+              <p className="text-sm font-bold tracking-widest text-[#93C5FD]">{String(i + 1).padStart(2, "0")}</p>
+              <h3 className="mt-2 text-xl font-extrabold tracking-tight text-[#F2E9DC]">{s.title}</h3>
+              <p className="mt-2 leading-relaxed text-white/70">{s.body}</p>
+            </li>
+          ))}
+        </ol>
+
+        <ul className="mt-10 w-full max-w-5xl space-y-2 text-sm text-white/55">
+          {TIPS.map((t) => (
+            <li key={t.label}>
+              <span className="font-semibold text-white/80">{t.label}</span> {t.body}
+            </li>
+          ))}
+        </ul>
       </section>
     </div>
   );
